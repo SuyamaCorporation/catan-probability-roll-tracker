@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>カタン数字確率ロールトラッカー</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen p-4">
+<div class="max-w-3xl mx-auto">
+  <h1 class="text-2xl font-bold text-center mb-2 text-orange-300">カタン数字確率ロールトラッカー</h1>
+  <div class="bg-gray-900 rounded-xl p-5 mb-4 flex gap-4 items-center justify-center flex-wrap">
+    <button id="rollBtn" aria-label="サイコロを振る" class="bg-orange-600 hover:bg-orange-500 rounded-xl px-8 py-4 text-2xl font-bold transition shadow-lg">🎲 振る</button>
+    <div id="diceResult" class="text-5xl font-bold text-white w-20 text-center">-</div>
+    <div id="diceDetails" class="text-gray-400 text-sm"></div>
+    <button id="resetBtn" aria-label="リセット" class="bg-gray-700 hover:bg-gray-600 rounded px-4 py-2 text-sm transition">リセット</button>
+  </div>
+  <div class="bg-gray-900 rounded-xl p-4 mb-4">
+    <div class="text-sm text-gray-400 mb-2">手動入力: 数字をクリック</div>
+    <div class="flex gap-2 flex-wrap justify-center" id="manualBtns"></div>
+  </div>
+  <div class="bg-gray-900 rounded-xl p-5 mb-4">
+    <h2 class="text-sm text-gray-400 mb-2">出現回数グラフ（棒：実際 / 線：理論確率）</h2>
+    <canvas id="chart" width="720" height="220" aria-label="ロール分布グラフ" class="w-full"></canvas>
+  </div>
+  <div class="grid grid-cols-2 gap-4">
+    <div class="bg-gray-900 rounded-xl p-4">
+      <h2 class="text-sm text-gray-400 mb-2">偏差（実際 − 期待値）</h2>
+      <div id="deviationList" class="space-y-1"></div>
+    </div>
+    <div class="bg-gray-900 rounded-xl p-4">
+      <h2 class="text-sm text-gray-400 mb-2">統計</h2>
+      <div id="stats" class="space-y-1 text-sm"></div>
+    </div>
+  </div>
+</div>
+<script>
+const theory = { 2:1, 3:2, 4:3, 5:4, 6:5, 7:6, 8:5, 9:4, 10:3, 11:2, 12:1 };
+const totalTheory = 36;
+
+let counts = {};
+for (let i = 2; i <= 12; i++) counts[i] = 0;
+let totalRolls = 0;
+
+function loadSaved() {
+  const saved = localStorage.getItem('catanTracker');
+  if (saved) {
+    const data = JSON.parse(saved);
+    counts = data.counts || counts;
+    totalRolls = data.totalRolls || 0;
+  }
+}
+function saveCurrent() {
+  localStorage.setItem('catanTracker', JSON.stringify({ counts, totalRolls }));
+}
+
+function rollDice() {
+  const d1 = Math.floor(Math.random() * 6) + 1;
+  const d2 = Math.floor(Math.random() * 6) + 1;
+  return { sum: d1 + d2, d1, d2 };
+}
+
+function addRoll(n) {
+  counts[n]++;
+  totalRolls++;
+  saveCurrent();
+  update();
+}
+
+function update() {
+  drawChart();
+  drawDeviation();
+  drawStats();
+}
+
+function drawChart() {
+  const canvas = document.getElementById('chart');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const pad = { top: 20, bottom: 40, left: 30, right: 10 };
+  const graphW = W - pad.left - pad.right;
+  const graphH = H - pad.top - pad.bottom;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = '#111827';
+  ctx.fillRect(0, 0, W, H);
+
+  const nums = [2,3,4,5,6,7,8,9,10,11,12];
+  const maxCount = Math.max(...nums.map(n => counts[n]), 1);
+  const maxExpected = totalRolls > 0 ? Math.max(...nums.map(n => (theory[n]/totalTheory) * totalRolls)) : 1;
+  const maxY = Math.max(maxCount, maxExpected, 1);
+  const barW = graphW / nums.length;
+
+  nums.forEach((n, i) => {
+    const x = pad.left + i * barW;
+    const barH = (counts[n] / maxY) * graphH;
+    const isLucky = n === 7;
+    ctx.fillStyle = isLucky ? '#ef4444' : '#f97316';
+    ctx.globalAlpha = 0.7;
+    ctx.fillRect(x + 4, pad.top + graphH - barH, barW - 8, barH);
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#6b7280';
+    ctx.font = '11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(n, x + barW / 2, H - pad.bottom + 15);
+    ctx.fillStyle = '#fff';
+    ctx.font = '10px monospace';
+    if (counts[n] > 0) ctx.fillText(counts[n], x + barW / 2, pad.top + graphH - barH - 2);
+  });
+
+  if (totalRolls > 0) {
+    ctx.strokeStyle = '#60a5fa';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 2]);
+    ctx.beginPath();
+    nums.forEach((n, i) => {
+      const x = pad.left + (i + 0.5) * barW;
+      const expected = (theory[n] / totalTheory) * totalRolls;
+      const y = pad.top + graphH - (expected / maxY) * graphH;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#60a5fa';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('── 理論値', pad.left, pad.top - 5);
+  }
+}
+
+function drawDeviation() {
+  const nums = [2,3,4,5,6,7,8,9,10,11,12];
+  if (totalRolls === 0) {
+    document.getElementById('deviationList').innerHTML = '<div class="text-gray-600 text-xs">ロール後に表示</div>';
+    return;
+  }
+  document.getElementById('deviationList').innerHTML = nums.map(n => {
+    const expected = (theory[n] / totalTheory) * totalRolls;
+    const dev = counts[n] - expected;
+    const color = dev > 1 ? 'text-green-400' : dev < -1 ? 'text-red-400' : 'text-gray-300';
+    return `<div class="flex justify-between text-xs"><span>${n}</span><span class="${color}">${dev >= 0 ? '+' : ''}${dev.toFixed(1)}</span></div>`;
+  }).join('');
+}
+
+function drawStats() {
+  const avg = totalRolls > 0 ? (Object.entries(counts).reduce((s, [k,v]) => s + +k*v, 0) / totalRolls).toFixed(2) : '-';
+  const topNum = totalRolls > 0 ? Object.entries(counts).sort((a,b) => b[1]-a[1])[0][0] : '-';
+  document.getElementById('stats').innerHTML = `
+    <div class="flex justify-between"><span class="text-gray-500">総ロール数</span><span class="font-bold">${totalRolls}</span></div>
+    <div class="flex justify-between"><span class="text-gray-500">平均</span><span class="font-bold">${avg}</span></div>
+    <div class="flex justify-between"><span class="text-gray-500">最多</span><span class="font-bold text-orange-400">${topNum}</span></div>
+    <div class="flex justify-between"><span class="text-gray-500">理論平均</span><span class="font-bold text-blue-400">7.00</span></div>
+  `;
+}
+
+const manualBtns = document.getElementById('manualBtns');
+for (let i = 2; i <= 12; i++) {
+  const btn = document.createElement('button');
+  btn.textContent = i;
+  btn.setAttribute('aria-label', `${i}を記録`);
+  btn.className = `w-10 h-10 rounded-lg text-sm font-bold transition ${i===7 ? 'bg-red-700 hover:bg-red-600' : 'bg-gray-700 hover:bg-gray-600'}`;
+  btn.addEventListener('click', () => addRoll(i));
+  manualBtns.appendChild(btn);
+}
+
+document.getElementById('rollBtn').addEventListener('click', () => {
+  const { sum, d1, d2 } = rollDice();
+  document.getElementById('diceResult').textContent = sum;
+  document.getElementById('diceDetails').textContent = `${d1} + ${d2}`;
+  addRoll(sum);
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  for (let i = 2; i <= 12; i++) counts[i] = 0;
+  totalRolls = 0;
+  document.getElementById('diceResult').textContent = '-';
+  document.getElementById('diceDetails').textContent = '';
+  saveCurrent();
+  update();
+});
+
+loadSaved();
+update();
+</script>
+</body>
+</html>
